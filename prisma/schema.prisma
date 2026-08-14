@@ -1,0 +1,121 @@
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  User
+  Admin
+}
+
+enum OrderStatus {
+  Pending
+  Paid
+  Failed
+  Cancelled
+}
+
+model User {
+  id String @id @default(uuid()) 
+  name String
+  email String @unique
+  role Role @default(User)
+  password String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt() @map("updated_at")
+
+  products Product[] @relation("product_created_by")
+  cart Cart?
+  order Order[]
+
+  @@map("users")
+}
+
+model Product {
+  id String @id @default(uuid())
+  name String
+  slug String @unique
+  description String?
+  priceCents Int @map("price_cents")
+  currency String @default("usd")
+  stock Int @default(0)
+  image String?
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt() @map("updated_at")
+
+  createdById String?
+  createdBy User? @relation("product_created_by",fields: [createdById], references: [id],onDelete: SetNull)
+
+  cartItems CartItem[] 
+  orderItems OrderItem[]
+
+  @@index([isActive])
+  @@index([createdAt])
+  @@map("products")
+}
+
+model Cart {
+  id String @id @default(uuid())
+  userId String @unique 
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt() @map("updated_at")
+   
+  user User @relation(fields: [userId],references: [id],onDelete: Cascade)
+  items CartItem[]
+
+  @@map("cart")
+}
+
+model CartItem {
+  id String @id @default(uuid())
+  cartId String @unique
+  productId String
+  quantity Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt() @map("updated_at")
+
+  cart Cart @relation(fields: [cartId],references: [id],onDelete: Cascade)
+  product Product @relation(fields: [productId],references: [id],onDelete: Cascade)
+  @@unique([cartId,productId])
+
+  @@map("cart_items")
+}
+
+model Order {
+  id String @id @default(uuid())
+  userId String 
+  status OrderStatus @default(Pending)
+  totalCents Int @map("total_cent")
+  currency String @default("usd")
+  stripeSessionId String? @unique 
+  stripePaymentIntentId String?  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt() @map("updated_at")
+  items OrderItem[]
+
+  user User @relation(fields: [userId],references: [id],onDelete: Cascade)
+
+  @@index([userId,status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id String @id @default(uuid())
+  orderId String
+  productId String
+  name String
+  unitPriceCents Int @map("unit_price_cents")
+  quantity Int
+
+  order Order @relation(fields: [orderId],references: [id],onDelete: Cascade)
+  product Product @relation(fields: [productId],references: [id],onDelete: Restrict)
+
+  @@map("order_items")
+}
