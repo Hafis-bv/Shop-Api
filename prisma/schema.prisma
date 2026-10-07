@@ -75,7 +75,7 @@ model Cart {
 
 model CartItem {
   id String @id @default(uuid())
-  cartId String @unique
+  cartId String
   productId String
   quantity Int
   createdAt DateTime @default(now()) @map("created_at")

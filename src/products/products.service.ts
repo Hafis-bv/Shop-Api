@@ -78,7 +78,7 @@ export class ProductsService {
         where,
         orderBy: { [sortBy]: order },
         skip: (page - 1) * limit,
-        take: limit,
+        take: Number(limit),
       }),
       this.prismaService.product.count({ where }),
     ]);

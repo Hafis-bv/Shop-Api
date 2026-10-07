@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shop-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hafisbabayev
+      POSTGRES_PASSWORD: hafis2006
+      POSTGRES_DB: Shop
+    ports:
+      - '5432:5432'
+    volumes:
+      - shop-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U hafisbabayev -d Shop']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  shop-pgdata:
