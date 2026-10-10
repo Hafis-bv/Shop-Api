@@ -54,6 +54,17 @@ export class CheckoutController {
     }
 
     try {
-    } catch (err) {}
+      await this.checkoutService.handleEvent(event);
+    } catch (err) {
+      this.logger.error(
+        `Failed to process stripe event ${event.id} ${event.type}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
+
+    return {
+      received: true,
+    };
   }
 }

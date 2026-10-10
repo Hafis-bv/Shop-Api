@@ -25,7 +25,14 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     err: unknown,
     user: TUser,
     info: unknown,
+    context: ExecutionContext,
   ): TUser {
+    const req = context.switchToHttp().getRequest<OptionalRequest>();
+
+    if (req[OPTIONAL_AUTH] && (err || !user)) {
+      return null as TUser;
+    }
+
     if (err || !user) {
       const reason =
         info instanceof Error ? `${info.name}: ${info.message}` : info;
@@ -46,11 +53,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
       req[OPTIONAL_AUTH] = true;
 
-      try {
-        await super.canActivate(context);
-      } catch (err) {
-        console.log(err);
-      }
+      await super.canActivate(context);
       return true;
     }
 

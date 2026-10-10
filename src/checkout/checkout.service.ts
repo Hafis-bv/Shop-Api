@@ -1,6 +1,11 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { OrderStatus, User } from '../generated/prisma/client';
+import { OrderStatus, Prisma, User } from '../generated/prisma/client';
 import { CartService } from '../cart/cart.service';
 import { StripeService } from './stripe.service';
 import Stripe from 'stripe';
@@ -124,5 +129,140 @@ export class CheckoutService {
       );
       throw new BadRequestException('Could not start the checkout session');
     }
+  }
+
+  async handleEvent(event: Stripe.Event) {
+    switch (event.type) {
+      case 'checkout.session.completed':
+      case 'checkout.session.async_payment_succeeded': {
+        const session = event.data.object;
+        if (session.payment_status == 'paid') {
+          await this.fullFilOrder(session);
+        }
+        break;
+      }
+
+      case 'checkout.session.expired':
+      case 'checkout.session.async_payment_failed': {
+        await this.failOrder(event.data.object, event.type);
+        break;
+      }
+
+      default:
+        this.logger.debug(`Ignoring unhandled stripe event ${event.type}`);
+    }
+  }
+
+  private async fullFilOrder(session: Stripe.Checkout.Session) {
+    const orderId = session.metadata?.orderId ?? session.client_reference_id;
+
+    if (!orderId) {
+      return this.logger.error(
+        `Stripe session ${session.id} carried no order id`,
+      );
+    }
+
+    await this.prismaService.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        include: { items: true },
+      });
+
+      if (!order)
+        return this.logger.error(`Webhook reference unknown order ${orderId}`);
+
+      if (order.status == OrderStatus.Paid)
+        return this.logger.log(
+          `Order ${orderId} already fulfilled - ignoring replay`,
+        );
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: OrderStatus.Paid,
+          stripePaymentIntentId:
+            typeof session.payment_intent == 'string'
+              ? session.payment_intent
+              : (session.payment_intent?.id ?? null),
+        },
+      });
+
+      for (const item of order.items) {
+        const updated = await tx.product.updateMany({
+          where: { id: item.productId, stock: { gte: item.quantity } },
+          data: {
+            stock: { decrement: item.quantity },
+          },
+        });
+
+        if (updated.count == 0)
+          this.logger.warn(
+            `Order ${order.id}: product ${item.productId} oversold - stock not decremented`,
+          );
+      }
+
+      const cart = await tx.cart.findUnique({
+        where: { userId: order.userId },
+      });
+      if (cart) {
+        await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+      }
+
+      this.logger.log(`Order ${order.id} paid and fulfilled`);
+    });
+  }
+
+  private async failOrder(session: Stripe.Checkout.Session, reason: string) {
+    const orderId = session.metadata?.orderId ?? session.client_reference_id;
+
+    if (!orderId) return;
+
+    await this.prismaService.order.updateMany({
+      where: { id: orderId, status: OrderStatus.Pending },
+      data: {
+        status:
+          reason == 'checkout.session.expired'
+            ? OrderStatus.Cancelled
+            : OrderStatus.Failed,
+      },
+    });
+  }
+
+  async findUserOrders(userId: string) {
+    return this.prismaService.order.findMany({
+      where: { userId },
+      include: { items: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findAllOrders(status?: OrderStatus) {
+    const where: Prisma.OrderWhereInput = status ? { status } : {};
+
+    return this.prismaService.order.findMany({
+      where,
+      include: {
+        items: true,
+        user: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+  }
+
+  async findUserOrder(userId: string, orderId: string) {
+    const order = await this.prismaService.order.findFirst({
+      where: { id: orderId, userId },
+      include: { items: true },
+    });
+
+    if (!order) throw new NotFoundException(`Order ${orderId} not found`);
+
+    return order;
   }
 }
